@@ -1,0 +1,53 @@
+# ============================================
+# EvoGNN Central Configuration
+# ============================================
+
+paths:
+  raw_gdsc2: "data/raw/drug_response/GDSC2_fitted_dose_response_27Oct23.xlsx"
+  raw_cmp_rnaseq_zip: "data/raw/expression/rnaseq_merged_20260323.zip"
+  raw_cmp_metadata: "data/raw/cell_line_metadata/model_list_20260420.csv"
+  raw_string_links: "data/raw/ppi_network/9606.protein.links.v12.0.txt.gz"
+  raw_string_info: "data/raw/ppi_network/9606.protein.info.v12.0.txt.gz"
+
+  raw_drug_annotations_dir: "data/raw/drug_annotations/"
+
+  processed_smiles: "data/processed/drug_smiles_final.csv"
+  processed_smiles_log: "data/processed/smiles_retrieval_log.csv"
+  processed_fingerprints: "data/processed/drug_fingerprints.csv"
+  processed_ppi_edges: "data/processed/ppi_edges.csv"
+  processed_master_dataset: "data/processed/master_dataset.csv"
+  processed_graph_dataset: "data/processed/graph_dataset.pt"
+  processed_ga_genes: "data/processed/ga_selected_genes.csv"
+  processed_graph_dataset_ga: "data/processed/graph_dataset_ga.pt"
+
+  results_dir: "results/"
+  figures_dir: "results/figures/"
+
+ppi:
+  confidence_threshold: 700
+
+fingerprints:
+  radius: 2
+  n_bits: 2048
+
+ga:
+  population_size: 50
+  generations: 20
+  crossover_prob: 0.7
+  mutation_prob: 0.02
+  tournament_size: 3
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  max_epochs: 50
+  early_stopping_patience: 10
+  n_folds: 5
+  random_seed: 42
+
+gnn:
+  hidden_dim: 64
+  num_layers: 3
+  dropout: 0.3
+
+device: "cpu"
