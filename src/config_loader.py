@@ -26,11 +26,13 @@ def load_config(config_path="config/config.yaml"):
             if key.startswith("raw_"):
                 relative = value.replace("data/raw/", "")
                 config["paths"][key] = os.path.join(drive_root, "raw", relative)
+                config["paths"]["processed_root"] = os.path.join(drive_root, "processed")
         config["paths"]["checkpoint_dir"] = checkpoint_root
         config["environment"] = "colab"
     else:
         config["paths"]["checkpoint_dir"] = "results/checkpoints"
         config["environment"] = "local"
+        config["paths"]["processed_root"] = "data/processed"
 
     return config
 

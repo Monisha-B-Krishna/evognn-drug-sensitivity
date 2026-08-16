@@ -15,10 +15,13 @@ paths:
   processed_smiles_log: "data/processed/smiles_retrieval_log.csv"
   processed_fingerprints: "data/processed/drug_fingerprints.csv"
   processed_ppi_edges: "data/processed/ppi_edges.csv"
-  processed_master_dataset: "data/processed/master_dataset.csv"
+  processed_master_dataset: "data/processed/master_dataset.parquet"
   processed_graph_dataset: "data/processed/graph_dataset.pt"
   processed_ga_genes: "data/processed/ga_selected_genes.csv"
   processed_graph_dataset_ga: "data/processed/graph_dataset_ga.pt"
+
+  processed_gene_index: "data/processed/gene_index.csv"
+  processed_ppi_edges_filtered: "data/processed/ppi_edges_filtered.csv"
 
   results_dir: "results/"
   figures_dir: "results/figures/"
@@ -32,7 +35,7 @@ fingerprints:
 
 ga:
   population_size: 50
-  generations: 20
+  generations: 40
   crossover_prob: 0.7
   mutation_prob: 0.02
   tournament_size: 3
