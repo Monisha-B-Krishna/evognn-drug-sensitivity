@@ -22,17 +22,21 @@ def load_config(config_path="config/config.yaml"):
     if is_colab():
         drive_root = "/content/drive/MyDrive/gnn_drug_data"
         checkpoint_root = "/content/drive/MyDrive/gnn_drug_checkpoints"
-        for key, value in config["paths"].items():
+
+        # First loop: only reads and reassigns EXISTING keys, never adds new ones
+        for key, value in list(config["paths"].items()):
             if key.startswith("raw_"):
                 relative = value.replace("data/raw/", "")
                 config["paths"][key] = os.path.join(drive_root, "raw", relative)
-                config["paths"]["processed_root"] = os.path.join(drive_root, "processed")
+
+        # New keys added AFTER the loop has fully finished — safe
         config["paths"]["checkpoint_dir"] = checkpoint_root
+        config["paths"]["processed_root"] = os.path.join(drive_root, "processed")
         config["environment"] = "colab"
     else:
         config["paths"]["checkpoint_dir"] = "results/checkpoints"
-        config["environment"] = "local"
         config["paths"]["processed_root"] = "data/processed"
+        config["environment"] = "local"
 
     return config
 
