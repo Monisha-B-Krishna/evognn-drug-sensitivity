@@ -6,5 +6,4 @@ __pycache__/
 results/figures/*.png
 *.pt
 .ipynb_checkpoints/
-
 results/
