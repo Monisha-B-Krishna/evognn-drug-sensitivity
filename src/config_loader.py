@@ -10,7 +10,7 @@ import os
 
 def is_colab():
     try:
-        import google.colab
+        __import__("google.colab")
         return True
     except ImportError:
         return False
