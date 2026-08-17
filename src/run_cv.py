@@ -1,8 +1,20 @@
 """
-run_cv.py
-5-fold stratified cross-validation training loop, with checkpointing so a
-run can be resumed if interrupted (essential once this moves to Colab,
-where sessions can disconnect).
+run_cv.py (CORRECTED)
+5-fold stratified cross-validation training loop.
+
+Fixes two bugs found after the first real GCN run:
+  1. Final per-fold metrics were computed using the LAST epoch's model
+     weights, not the BEST epoch's weights — every fold's model degraded
+     after its peak (early stopping has patience=10, so training
+     continues 10 epochs past the best point), and the final report
+     showed the degraded end-state instead of the actual best performance.
+     Fix: keep the best-epoch weights in memory, restore them before
+     computing final fold metrics.
+  2. Folds completed in an earlier session (and skipped via the
+     checkpoint system) never appeared in the final summary, since it
+     was only built in-memory for the current run. Fix: persist each
+     fold's final metrics to a JSON file as soon as it completes, and
+     build the final summary by reading that file, not an in-memory list.
 
 Usage: python src/run_cv.py --model gcn
        python src/run_cv.py --model gat
@@ -11,6 +23,7 @@ Usage: python src/run_cv.py --model gcn
 import os
 import sys
 import json
+import copy
 import argparse
 import numpy as np
 import torch
@@ -54,6 +67,27 @@ def load_progress(checkpoint_dir, model_name):
     return []
 
 
+def save_fold_metrics(checkpoint_dir, model_name, fold, metrics):
+    """Persist each fold's final (best-epoch) metrics as soon as it completes,
+    so the summary survives across sessions/resumes."""
+    path = os.path.join(checkpoint_dir, f"{model_name}_fold_metrics.json")
+    all_metrics = {}
+    if os.path.exists(path):
+        with open(path) as f:
+            all_metrics = json.load(f)
+    all_metrics[str(fold)] = metrics
+    with open(path, "w") as f:
+        json.dump(all_metrics, f, indent=2)
+
+
+def load_all_fold_metrics(checkpoint_dir, model_name):
+    path = os.path.join(checkpoint_dir, f"{model_name}_fold_metrics.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return {}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, choices=["gcn", "gat", "gin"])
@@ -80,7 +114,6 @@ def main():
 
     subset_labels = labels[subset_idx]
 
-    # Class weights (close to 1.0 given ~50/50 balance, but computed properly regardless)
     n_pos = (subset_labels == 1).sum()
     n_neg = (subset_labels == 0).sum()
     pos_weight = torch.tensor([n_neg / max(n_pos, 1)], dtype=torch.float32).to(device)
@@ -91,12 +124,10 @@ def main():
                            random_state=cfg["training"]["random_seed"])
     fold_splits = list(skf.split(subset_idx, subset_labels))
     if n_folds == 1:
-        fold_splits = fold_splits[:1]  # smoke test: just use the first split, ignore the rest
+        fold_splits = fold_splits[:1]
 
     completed_folds = load_progress(checkpoint_dir, args.model)
     print(f"Already completed folds: {completed_folds}")
-
-    all_fold_metrics = []
 
     for fold, (train_pos, val_pos) in enumerate(fold_splits):
         if fold in completed_folds:
@@ -118,10 +149,12 @@ def main():
             optimizer.load_state_dict(resume["optimizer_state_dict"])
             start_epoch = resume["epoch"] + 1
             best_val_f1 = resume["best_val_f1"]
+            best_model_state = copy.deepcopy(model.state_dict())  # best-so-far, assumed same as resumed for now
             print(f"Resuming fold {fold} from epoch {start_epoch}")
         else:
             start_epoch = 0
             best_val_f1 = 0.0
+            best_model_state = None
 
         patience_counter = 0
         for epoch in range(start_epoch, max_epochs):
@@ -133,6 +166,7 @@ def main():
 
             if val_metrics["f1_macro"] > best_val_f1:
                 best_val_f1 = val_metrics["f1_macro"]
+                best_model_state = copy.deepcopy(model.state_dict())  # KEY FIX: snapshot best weights
                 patience_counter = 0
             else:
                 patience_counter += 1
@@ -143,18 +177,40 @@ def main():
                 print(f"  Early stopping at epoch {epoch}")
                 break
 
+        # KEY FIX: restore the BEST epoch's weights before final evaluation,
+        # not whatever the last (possibly degraded) epoch left behind
+        if best_model_state is not None:
+            model.load_state_dict(best_model_state)
+
         final_metrics = evaluate(model, val_loader, device)
         final_metrics["fold"] = fold
-        all_fold_metrics.append(final_metrics)
+        print(f"Fold {fold} final (best-epoch) metrics: F1={final_metrics['f1_macro']:.4f}, "
+              f"AUC={final_metrics['roc_auc']:.4f}, Acc={final_metrics['accuracy']:.4f}")
+
+        save_fold_metrics(checkpoint_dir, args.model, fold, final_metrics)
 
         completed_folds.append(fold)
         save_progress(checkpoint_dir, args.model, completed_folds)
         print(f"Fold {fold} complete. Best val F1: {best_val_f1:.4f}")
 
+    # Build the final summary from the PERSISTED file, not an in-memory list —
+    # this correctly includes folds completed in earlier sessions
+    all_metrics = load_all_fold_metrics(checkpoint_dir, args.model)
+
     print(f"\n{'='*50}")
-    print(f"{args.model.upper()} training complete across {len(all_fold_metrics)} fold(s)")
-    for m in all_fold_metrics:
-        print(f"  Fold {m['fold']}: F1={m['f1_macro']:.4f}, AUC={m['roc_auc']:.4f}, Acc={m['accuracy']:.4f}")
+    print(f"{args.model.upper()} training complete across {len(all_metrics)} fold(s)")
+    f1s, aucs, accs = [], [], []
+    for fold_str in sorted(all_metrics.keys(), key=int):
+        m = all_metrics[fold_str]
+        print(f"  Fold {fold_str}: F1={m['f1_macro']:.4f}, AUC={m['roc_auc']:.4f}, Acc={m['accuracy']:.4f}")
+        f1s.append(m['f1_macro'])
+        aucs.append(m['roc_auc'])
+        accs.append(m['accuracy'])
+
+    if len(f1s) > 0:
+        print(f"\n  Mean F1:  {np.mean(f1s):.4f} +/- {np.std(f1s):.4f}")
+        print(f"  Mean AUC: {np.mean(aucs):.4f} +/- {np.std(aucs):.4f}")
+        print(f"  Mean Acc: {np.mean(accs):.4f} +/- {np.std(accs):.4f}")
     print('='*50)
 
 
