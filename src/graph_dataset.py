@@ -26,6 +26,19 @@ class EvoGNNDataset(Dataset):
             self.edge_index_path = "data/processed/ga_edge_index.npy"
 
         self.expression = np.load(f"{array_dir}/expression_matrix.npy")
+
+        # --- CRITICAL FIX: z-score normalize each gene across all samples ---
+        # Raw TPM values range from 0 to thousands with no scaling. Feeding
+        # these directly into the GNN as node features caused loss to stay
+        # completely flat and val_auc to converge to exactly 0.5 (random
+        # guessing) — the model had no usable gradient signal. Normalizing
+        # each gene to mean=0, std=1 fixes this, same lesson learned in
+        # Day 7's GA fitness function (StandardScaler before LogisticRegression).
+        mean = self.expression.mean(axis=0, keepdims=True)
+        std = self.expression.std(axis=0, keepdims=True)
+        self.expression = (self.expression - mean) / (std + 1e-8)
+        print(f"Expression normalized: mean={self.expression.mean():.4f}, std={self.expression.std():.4f}")
+
         self.labels = np.load(f"{array_dir}/labels.npy")
         self.drug_ids = np.load(f"{array_dir}/drug_ids.npy")
         self.fingerprints = np.load(f"{array_dir}/fingerprint_matrix.npy")
