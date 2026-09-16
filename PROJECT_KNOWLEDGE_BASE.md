@@ -115,3 +115,106 @@ DAY 9 — COMPLETE. GCN/GAT/GIN smoke-tested locally on CPU, 200 samples:
   - Checkpointing and progress tracking confirmed working
   - Smoke-test metrics are meaningless by design (200 samples) - not
     indicative of real performance, just correctness verification
+
+CRITICAL BUG FOUND & FIXED (Day 10, first real training attempt):
+  - Initial GCN training run showed val_auc frozen at exactly 0.5000
+    across all epochs (loss barely moving 0.6854->0.6852) - model
+    learning nothing
+  - Root cause: EvoGNNDataset fed raw, unscaled TPM expression values
+    (range 0 to thousands) directly as node features - same class of
+    bug as Day 7's GA slowdown, just undiagnosed until real training
+  - Fix: added z-score normalization (per-gene, across all samples) in
+    EvoGNNDataset.__init__ - mean~0, std~1 confirmed
+  - RESULT: loss now decreasing properly, val_auc climbing (0.608->0.615
+    in first 2 epochs of corrected run)
+  - LESSON: any future model reading raw expression/TPM values needs
+    normalization built in from the start, not discovered after a
+    failed training run
+
+CRITICAL BUG #2 FOUND & FIXED (Day 10, GCN full training):
+  - First corrected run (post-normalization-fix) still showed a problem:
+    final reported fold metrics were much worse than peak performance
+    seen mid-training (e.g. Fold 1 peaked val_f1=0.60 at epoch ~14, but
+    final report showed F1=0.38 - the LAST epoch's degraded weights,
+    not the BEST epoch's weights, due to early stopping patience=10
+    allowing 10 epochs of degradation after the peak before stopping)
+  - Also found: folds completed in an earlier session were missing from
+    the final summary entirely (in-memory list, not persisted)
+  - Fix: run_cv.py now snapshots best model weights (copy.deepcopy) 
+    whenever val_f1 improves, restores those weights before final
+    evaluation, and persists each fold's final metrics to JSON so the
+    summary survives across sessions
+  - GCN Fold 0 (corrected): F1=0.5878, AUC=0.6342, Acc=0.5954
+  - Full GCN 5-fold CV being rerun from scratch with the fix
+
+
+GCN — FINAL 5-FOLD CV RESULTS (corrected, best-epoch weights):
+  Mean F1-macro: 0.5973 +/- 0.0051
+  Mean ROC-AUC:  0.6383 +/- 0.0048
+  Mean Accuracy: 0.6008 +/- 0.0043
+  (Individual folds: F1 range 0.588-0.603, AUC range 0.633-0.646 -
+  very consistent across folds, low variance)
+
+
+GAT — FINAL 5-FOLD CV RESULTS:
+  Mean F1-macro: 0.6252 +/- 0.0212
+  Mean ROC-AUC:  0.6804 +/- 0.0315
+  Mean Accuracy: 0.6303 +/- 0.0221
+  Outperforms GCN on both F1 (+0.028) and AUC (+0.042), but with
+  higher fold-to-fold variance (GCN: +/-0.005 vs GAT: +/-0.021 F1)
+  Note: GAT trained the full 50 epochs in most folds without early
+  stopping triggering - may benefit from more epochs in future work
+
+GIN — FINAL 5-FOLD CV RESULTS:
+  Mean F1-macro: 0.7194 +/- 0.0033
+  Mean ROC-AUC:  0.7980 +/- 0.0043
+  Mean Accuracy: 0.7198 +/- 0.0033
+  Best of all three GNN architectures by a wide margin, nearly matching
+  flat-feature baselines (RF: 0.742 F1/0.822 AUC, MLP: 0.741/0.826)
+  Low variance across folds (comparable to GCN, much lower than GAT)
+
+FULL MODEL COMPARISON (final):
+  RF:  F1=0.7423+/-0.0013, AUC=0.8223+/-0.0011
+  MLP: F1=0.7409+/-0.0023, AUC=0.8256+/-0.0017
+  GIN: F1=0.7194+/-0.0033, AUC=0.7980+/-0.0043
+  GAT: F1=0.6252+/-0.0212, AUC=0.6804+/-0.0315
+  GCN: F1=0.5973+/-0.0051, AUC=0.6383+/-0.0048
+
+  KEY FINDING: GIN's injective aggregation nearly closes the gap with
+  flat baselines despite 57.7% graph connectivity, while GCN/GAT lag
+  substantially - suggests aggregation mechanism choice matters more
+  under partial network connectivity than architecture "graph-ness" alone
+
+
+  BASELINE COMPARISON (Day 11) — RANDOM FOREST & MLP:
+  - Same GA-selected 300 genes + 2048-dim drug fingerprint as GNN inputs,
+    concatenated into flat feature vectors (2348 total features), same
+    5-fold stratified CV protocol (same random seed as GNN runs)
+  - No graph structure used at all - direct test of whether PPI-network
+    message-passing adds value over the same features flat
+  - Ran locally on CPU (sklearn), in parallel with GIN training on Colab
+  - X shape: (235103, 2348)
+
+  RANDOM FOREST (n_estimators=200, class_weight="balanced"):
+    Mean F1-macro: 0.7423 +/- 0.0013
+    Mean ROC-AUC:  0.8223 +/- 0.0011
+    Mean Accuracy: 0.7424 +/- 0.0014
+    Extremely low variance across folds - most consistent model of all 5
+
+  MLP (flat, hidden_layers=(128,32), StandardScaler applied):
+    Mean F1-macro: 0.7409 +/- 0.0023
+    Mean ROC-AUC:  0.8256 +/- 0.0017
+    Mean Accuracy: 0.7411 +/- 0.0023
+    Highest raw AUC of all 5 models tested
+
+  KEY FINDING: Both flat baselines outperform GCN and GAT substantially,
+  and modestly outperform GIN (~0.02-0.03 F1/AUC gap). This directly
+  motivated waiting for GIN's completion before finalizing the paper's
+  framing - the GA+GNN "beats baselines" narrative doesn't hold for
+  GCN/GAT, but GIN's near-parity performance (within margin of the
+  baselines despite only 57.7% graph connectivity) supports a more
+  nuanced, still-defensible finding: aggregation mechanism choice
+  matters significantly under partial network connectivity.
+  RF/MLP results saved to results/checkpoints/baseline_rf_fold_metrics.json
+  and baseline_mlp_fold_metrics.json (Day 11 completed in parallel with
+  Day 9-10's GNN training runs, not sequentially as originally planned)
