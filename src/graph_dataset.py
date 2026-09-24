@@ -47,8 +47,18 @@ class EvoGNNDataset(Dataset):
         # guessing) — the model had no usable gradient signal. Normalizing
         # each gene to mean=0, std=1 fixes this, same lesson learned in
         # Day 7's GA fitness function (StandardScaler before LogisticRegression).
-        self._mean = self.expression.mean(axis=0).astype(np.float32)
-        self._std = (self.expression.std(axis=0) + 1e-8).astype(np.float32)
+        CHUNK = 5000  # rows at a time — bounds peak memory regardless of file size
+        n_samples, n_genes = self.expression.shape
+        sum_ = np.zeros(n_genes, dtype=np.float64)
+        sumsq_ = np.zeros(n_genes, dtype=np.float64)
+        for start in range(0, n_samples, CHUNK):
+            chunk = np.asarray(self.expression[start:start + CHUNK], dtype=np.float64)
+            sum_ += chunk.sum(axis=0)
+            sumsq_ += (chunk ** 2).sum(axis=0)
+        mean = sum_ / n_samples
+        var = np.maximum(sumsq_ / n_samples - mean ** 2, 0)
+        self._mean = mean.astype(np.float32)
+        self._std = (np.sqrt(var) + 1e-8).astype(np.float32)
         print(f"Expression stats: mean-of-gene-means={self._mean.mean():.4f}, "
               f"mean-of-gene-stds={self._std.mean():.4f} (normalized per-sample in get())")
 
