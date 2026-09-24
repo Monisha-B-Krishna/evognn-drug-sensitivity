@@ -15,7 +15,9 @@ import numpy as np
 import random
 
 # ---- CONFIG: update these to match your actual paths ----
-PPI_EDGES_PATH       = "data/processed/ppi_edges.csv"  # your Day 5 output: gene1, gene2, combined_score
+PPI_EDGES_PATH       = "data/processed/ppi_edges_filtered.csv"  # filtered edges — the raw ppi_edges.csv
+# still has ~44 unmapped ENSP protein IDs that never resolved to a gene symbol during
+# QC, and those don't exist as columns in master_dataset.parquet (gene1, gene2, combined_score)
 PPI_GENE_COL_1        = "gene1"   # adjust to your actual column names
 PPI_GENE_COL_2        = "gene2"
 GA_SELECTED_PATH    = "data/processed/ga_selected_genes.csv" # existing GA output — used only to confirm N=300

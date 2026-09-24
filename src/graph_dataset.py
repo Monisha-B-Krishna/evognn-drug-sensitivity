@@ -12,7 +12,7 @@ import sys
 
 
 class EvoGNNDataset(Dataset):
-    def __init__(self, array_dir=None):
+    def __init__(self, array_dir=None, edge_index_path=None):
         super().__init__()
         if array_dir is None:
             sys_path_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,11 +21,24 @@ class EvoGNNDataset(Dataset):
             cfg = load_config(os.path.join(sys_path_root, "config", "config.yaml"))
             processed_root = cfg["paths"]["processed_root"]
             array_dir = os.path.join(processed_root, "graph_arrays")
-            self.edge_index_path = os.path.join(processed_root, "ga_edge_index.npy")
-        else:
-            self.edge_index_path = "data/processed/ga_edge_index.npy"
+            if edge_index_path is None:
+                edge_index_path = os.path.join(processed_root, "ga_edge_index.npy")
+        elif edge_index_path is None:
+            raise ValueError(
+                "edge_index_path must be given explicitly when array_dir is set "
+                "(e.g. 'data/processed/no_ga_edge_index.npy' for array_dir="
+                "'data/processed/graph_arrays_no_ga') — there is no safe default "
+                "to fall back to for a non-GA array_dir."
+            )
+        self.edge_index_path = edge_index_path
 
-        self.expression = np.load(f"{array_dir}/expression_matrix.npy")
+        # mmap instead of a full np.load: the no_ga ablation's expression matrix
+        # is ~15GB on disk (15,778 genes vs GA's 300), and materializing a
+        # z-scored copy the old way (self.expression = (self.expression - mean) / std)
+        # briefly needs ~2x that in RAM — doesn't fit on a 16GB machine. Reading
+        # rows lazily via mmap and normalizing per-sample in get() keeps resident
+        # memory at O(num_genes) instead of O(num_samples * num_genes).
+        self.expression = np.load(f"{array_dir}/expression_matrix.npy", mmap_mode="r")
 
         # --- CRITICAL FIX: z-score normalize each gene across all samples ---
         # Raw TPM values range from 0 to thousands with no scaling. Feeding
@@ -34,10 +47,10 @@ class EvoGNNDataset(Dataset):
         # guessing) — the model had no usable gradient signal. Normalizing
         # each gene to mean=0, std=1 fixes this, same lesson learned in
         # Day 7's GA fitness function (StandardScaler before LogisticRegression).
-        mean = self.expression.mean(axis=0, keepdims=True)
-        std = self.expression.std(axis=0, keepdims=True)
-        self.expression = (self.expression - mean) / (std + 1e-8)
-        print(f"Expression normalized: mean={self.expression.mean():.4f}, std={self.expression.std():.4f}")
+        self._mean = self.expression.mean(axis=0).astype(np.float32)
+        self._std = (self.expression.std(axis=0) + 1e-8).astype(np.float32)
+        print(f"Expression stats: mean-of-gene-means={self._mean.mean():.4f}, "
+              f"mean-of-gene-stds={self._std.mean():.4f} (normalized per-sample in get())")
 
         self.labels = np.load(f"{array_dir}/labels.npy")
         self.drug_ids = np.load(f"{array_dir}/drug_ids.npy")
@@ -48,7 +61,8 @@ class EvoGNNDataset(Dataset):
         return len(self.labels)
 
     def get(self, idx):
-        x = torch.tensor(self.expression[idx], dtype=torch.float32).unsqueeze(1)  # [num_genes, 1]
+        x_row = (np.asarray(self.expression[idx], dtype=np.float32) - self._mean) / self._std
+        x = torch.tensor(x_row, dtype=torch.float32).unsqueeze(1)  # [num_genes, 1]
         fp = torch.tensor(self.fingerprints[self.drug_ids[idx]], dtype=torch.float32)
         y = torch.tensor([self.labels[idx]], dtype=torch.float32)
 

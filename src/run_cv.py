@@ -88,18 +88,46 @@ def load_all_fold_metrics(checkpoint_dir, model_name):
     return {}
 
 
+DATASET_CHOICES = ["ga", "no_ga", "random"]
+
+
+def dataset_paths(cfg, dataset):
+    """Resolve array_dir/edge_index_path for a dataset choice via cfg["paths"]["processed_root"],
+    same as graph_dataset.py's own GA default — so on Colab these correctly redirect to the
+    Drive-mounted processed_root, exactly like the existing GA artifacts already do."""
+    if dataset == "ga":
+        return dict(array_dir=None, edge_index_path=None)
+    processed_root = cfg["paths"]["processed_root"]
+    return dict(array_dir=os.path.join(processed_root, f"graph_arrays_{dataset}"),
+                edge_index_path=os.path.join(processed_root, f"{dataset}_edge_index.npy"))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, choices=["gcn", "gat", "gin"])
+    parser.add_argument("--dataset", default="ga", choices=DATASET_CHOICES,
+                         help="Which gene set to train on: the original GA-selected "
+                              "genes, or one of the no_ga/random ablation sets")
     parser.add_argument("--smoke-test", action="store_true", help="Run on a tiny subset, 1 fold, 2 epochs")
+    parser.add_argument("--quick", action="store_true",
+                         help="Reduced-scope first pass: 3 folds, 15 epochs instead of the "
+                              "configured 5 folds / 50 epochs, for a fast initial signal on "
+                              "slower hardware before committing to a full run")
     args = parser.parse_args()
+
+    # Namespace checkpoints/progress/metrics by dataset (and quick-mode) so ablation
+    # and reduced-scope runs never collide with (or overwrite) other runs' files.
+    # "ga" keeps the original file names for backward compatibility.
+    run_name = args.model if args.dataset == "ga" else f"{args.model}_{args.dataset}"
+    if args.quick:
+        run_name += "_quick"
 
     cfg = load_config()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
     checkpoint_dir = cfg["paths"]["checkpoint_dir"]
-    dataset = EvoGNNDataset()
+    dataset = EvoGNNDataset(**dataset_paths(cfg, args.dataset))
     labels = dataset.labels
 
     if args.smoke_test:
@@ -111,6 +139,11 @@ def main():
         subset_idx = np.arange(len(dataset))
         n_folds = cfg["training"]["n_folds"]
         max_epochs = cfg["training"]["max_epochs"]
+        if args.quick:
+            print("QUICK MODE: 3 folds, 15 epochs (reduced from configured "
+                  f"{n_folds} folds / {max_epochs} epochs)")
+            n_folds = 3
+            max_epochs = 15
 
     subset_labels = labels[subset_idx]
 
@@ -126,7 +159,7 @@ def main():
     if n_folds == 1:
         fold_splits = fold_splits[:1]
 
-    completed_folds = load_progress(checkpoint_dir, args.model)
+    completed_folds = load_progress(checkpoint_dir, run_name)
     print(f"Already completed folds: {completed_folds}")
 
     for fold, (train_pos, val_pos) in enumerate(fold_splits):
@@ -143,7 +176,7 @@ def main():
         model = build_model(args.model, cfg).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg["training"]["learning_rate"])
 
-        resume = load_checkpoint(checkpoint_dir, args.model, fold, device)
+        resume = load_checkpoint(checkpoint_dir, run_name, fold, device)
         if resume:
             model.load_state_dict(resume["model_state_dict"])
             optimizer.load_state_dict(resume["optimizer_state_dict"])
@@ -171,7 +204,7 @@ def main():
             else:
                 patience_counter += 1
 
-            save_checkpoint(model, optimizer, fold, epoch, best_val_f1, checkpoint_dir, args.model)
+            save_checkpoint(model, optimizer, fold, epoch, best_val_f1, checkpoint_dir, run_name)
 
             if patience_counter >= cfg["training"]["early_stopping_patience"]:
                 print(f"  Early stopping at epoch {epoch}")
@@ -187,18 +220,18 @@ def main():
         print(f"Fold {fold} final (best-epoch) metrics: F1={final_metrics['f1_macro']:.4f}, "
               f"AUC={final_metrics['roc_auc']:.4f}, Acc={final_metrics['accuracy']:.4f}")
 
-        save_fold_metrics(checkpoint_dir, args.model, fold, final_metrics)
+        save_fold_metrics(checkpoint_dir, run_name, fold, final_metrics)
 
         completed_folds.append(fold)
-        save_progress(checkpoint_dir, args.model, completed_folds)
+        save_progress(checkpoint_dir, run_name, completed_folds)
         print(f"Fold {fold} complete. Best val F1: {best_val_f1:.4f}")
 
     # Build the final summary from the PERSISTED file, not an in-memory list —
     # this correctly includes folds completed in earlier sessions
-    all_metrics = load_all_fold_metrics(checkpoint_dir, args.model)
+    all_metrics = load_all_fold_metrics(checkpoint_dir, run_name)
 
     print(f"\n{'='*50}")
-    print(f"{args.model.upper()} training complete across {len(all_metrics)} fold(s)")
+    print(f"{run_name.upper()} training complete across {len(all_metrics)} fold(s)")
     f1s, aucs, accs = [], [], []
     for fold_str in sorted(all_metrics.keys(), key=int):
         m = all_metrics[fold_str]
