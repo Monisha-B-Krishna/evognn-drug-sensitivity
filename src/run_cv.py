@@ -170,8 +170,8 @@ def main():
         train_idx = subset_idx[train_pos]
         val_idx = subset_idx[val_pos]
 
-        train_loader = DataLoader([dataset[i] for i in train_idx], batch_size=cfg["training"]["batch_size"], shuffle=True)
-        val_loader = DataLoader([dataset[i] for i in val_idx], batch_size=cfg["training"]["batch_size"])
+        train_loader = DataLoader(dataset[train_idx.tolist()], batch_size=cfg["training"]["batch_size"], shuffle=True)
+        val_loader = DataLoader(dataset[val_idx.tolist()], batch_size=cfg["training"]["batch_size"])
 
         model = build_model(args.model, cfg).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg["training"]["learning_rate"])
