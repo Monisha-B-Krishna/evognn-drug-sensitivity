@@ -97,7 +97,7 @@ def dataset_paths(cfg, dataset):
     Drive-mounted processed_root, exactly like the existing GA artifacts already do."""
     if dataset == "ga":
         return dict(array_dir=None, edge_index_path=None)
-    processed_root = cfg["paths"]["processed_root"]
+    processed_root = os.environ.get("EVOGNN_DATA_ROOT", cfg["paths"]["processed_root"])
     return dict(array_dir=os.path.join(processed_root, f"graph_arrays_{dataset}"),
                 edge_index_path=os.path.join(processed_root, f"{dataset}_edge_index.npy"))
 
