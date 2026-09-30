@@ -88,7 +88,7 @@ def load_all_fold_metrics(checkpoint_dir, model_name):
     return {}
 
 
-DATASET_CHOICES = ["ga", "no_ga", "random"]
+DATASET_CHOICES = ["ga", "no_ga", "random", "no_ga_capped"]
 
 
 def dataset_paths(cfg, dataset):
