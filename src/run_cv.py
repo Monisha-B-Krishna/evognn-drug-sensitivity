@@ -113,6 +113,10 @@ def main():
                          help="Reduced-scope first pass: 3 folds, 15 epochs instead of the "
                               "configured 5 folds / 50 epochs, for a fast initial signal on "
                               "slower hardware before committing to a full run")
+    parser.add_argument("--max-epochs-override", type=int, default=None,
+                     help="Cap epoch count without changing the run name, so existing "
+                          "checkpoints/progress stay valid (used when a model like GAT "
+                          "is too slow even for --quick)")
     args = parser.parse_args()
 
     # Namespace checkpoints/progress/metrics by dataset (and quick-mode) so ablation
@@ -121,6 +125,9 @@ def main():
     run_name = args.model if args.dataset == "ga" else f"{args.model}_{args.dataset}"
     if args.quick:
         run_name += "_quick"
+        if args.max_epochs_override is not None:
+            max_epochs = args.max_epochs_override
+            print(f"  -> epoch count capped to {max_epochs} via --max-epochs-override")
 
     cfg = load_config()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
