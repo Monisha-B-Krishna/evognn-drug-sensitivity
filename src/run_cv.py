@@ -125,9 +125,7 @@ def main():
     run_name = args.model if args.dataset == "ga" else f"{args.model}_{args.dataset}"
     if args.quick:
         run_name += "_quick"
-        if args.max_epochs_override is not None:
-            max_epochs = args.max_epochs_override
-            print(f"  -> epoch count capped to {max_epochs} via --max-epochs-override")
+        
 
     cfg = load_config()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -151,8 +149,13 @@ def main():
                   f"{n_folds} folds / {max_epochs} epochs)")
             n_folds = 3
             max_epochs = 15
+            if args.max_epochs_override is not None:
+                max_epochs = args.max_epochs_override
+                print(f"  -> epoch count capped to {max_epochs} via --max-epochs-override")
 
     subset_labels = labels[subset_idx]
+
+
 
     n_pos = (subset_labels == 1).sum()
     n_neg = (subset_labels == 0).sum()
